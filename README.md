@@ -27,7 +27,7 @@ Windows:
 Установить зависимости:
 
 ```bash
-pip install fastapi uvicorn openpyxl pandas
+pip install -r requirements.txt
 ```
 
 Запустить сервер:
