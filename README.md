@@ -613,13 +613,10 @@ source .venv/bin/activate
 pip install openpyxl
 ```
 
-Для запуска страницы с анализом:
-Из корневой папки:
+Запуск Sql в папке бэкэнд
 
 ```bash
-cd frontend
-npm install
-npm run dev
+uvicorn main:app --reload
 ```
 
 
