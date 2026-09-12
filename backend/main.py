@@ -1,4 +1,5 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from database import get_connection, init_db
@@ -50,7 +51,13 @@ class PlacementCreate(BaseModel):
     impressions: int = 0
 
 app = FastAPI()
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 def startup():
@@ -919,3 +926,363 @@ def get_dashboard_analytics():
 
     finally:
         connection.close()
+
+
+@app.get("/analytics/sales")
+def sales_analytics():
+    connection = get_connection()
+
+    revenue = connection.execute(
+        "SELECT COALESCE(SUM(amount), 0) FROM sales"
+    ).fetchone()[0]
+
+    purchases = connection.execute(
+        "SELECT COUNT(*) FROM sales"
+    ).fetchone()[0]
+
+    customers = connection.execute(
+        "SELECT COUNT(DISTINCT student_id) FROM sales"
+    ).fetchone()[0]
+
+    courses = connection.execute(
+        "SELECT COUNT(DISTINCT course) FROM sales"
+    ).fetchone()[0]
+
+    average_check = (
+        revenue / purchases
+        if purchases
+        else 0
+    )
+
+    repeat_customers = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM (
+            SELECT student_id
+            FROM sales
+            GROUP BY student_id
+            HAVING COUNT(*) > 1
+        )
+        """
+    ).fetchone()[0]
+
+    repeat_rate = (
+        repeat_customers / customers * 100
+        if customers
+        else 0
+    )
+
+    connection.close()
+
+    return {
+        "revenue": revenue,
+        "purchases": purchases,
+        "customers": customers,
+        "courses": courses,
+        "average_check": average_check,
+        "repeat_customers": repeat_customers,
+        "repeat_rate": repeat_rate,
+    }
+
+@app.get("/analytics/attribution")
+def analytics_attribution():
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT
+            sp.campaign_id,
+            sc.name AS campaign_name,
+            sp.placement_id,
+            sp.channel_name,
+            sp.creative_id,
+            sp.cost,
+            COUNT(DISTINCT mt.touch_id) AS touches,
+            COUNT(
+                DISTINCT CASE
+                    WHEN mt.event_type = 'lead'
+                    THEN mt.student_id
+                END
+            ) AS leads,
+            COUNT(DISTINCT a.student_id) AS buyers,
+            COALESCE(SUM(a.attributed_revenue), 0) AS revenue
+        FROM synthetic_placements sp
+        LEFT JOIN synthetic_campaigns sc
+            ON sc.campaign_id = sp.campaign_id
+        LEFT JOIN marketing_touches mt
+            ON mt.placement_id = sp.placement_id
+        LEFT JOIN attribution a
+            ON a.touch_id = mt.touch_id
+        GROUP BY
+            sp.campaign_id,
+            sc.name,
+            sp.placement_id,
+            sp.channel_name,
+            sp.creative_id,
+            sp.cost
+        ORDER BY revenue DESC
+        """
+    ).fetchall()
+
+    result = []
+
+    for row in rows:
+        item = dict(row)
+
+        cost = item["cost"] or 0
+        revenue = item["revenue"] or 0
+
+        item["romi"] = (
+            ((revenue - cost) / cost) * 100
+            if cost > 0
+            else 0
+        )
+
+        result.append(item)
+
+    connection.close()
+
+    return result
+
+@app.get("/analytics/sales/courses")
+def sales_by_courses():
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT
+            course,
+            COUNT(*) AS purchases,
+            COUNT(DISTINCT student_id) AS customers,
+            SUM(amount) AS revenue,
+            AVG(amount) AS average_check
+        FROM sales
+        GROUP BY course
+        ORDER BY revenue DESC
+        """
+    ).fetchall()
+
+    connection.close()
+
+    return [dict(row) for row in rows]
+
+
+@app.get("/analytics/sales/daily")
+def sales_by_day():
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT
+            DATE(purchased_at) AS date,
+            COUNT(*) AS purchases,
+            SUM(amount) AS revenue
+        FROM sales
+        GROUP BY DATE(purchased_at)
+        ORDER BY date
+        """
+    ).fetchall()
+
+    connection.close()
+
+    return [dict(row) for row in rows]
+
+
+@app.get("/analytics/sales/daily")
+def sales_by_day():
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT
+            DATE(purchased_at) AS date,
+            COUNT(*) AS purchases,
+            SUM(amount) AS revenue
+        FROM sales
+        GROUP BY DATE(purchased_at)
+        ORDER BY date
+        """
+    ).fetchall()
+
+    connection.close()
+
+    return [dict(row) for row in rows]
+
+@app.get("/analytics/sales/customers")
+def customer_analytics():
+    connection = get_connection()
+
+    rows = connection.execute(
+        """
+        SELECT
+            student_id,
+            COUNT(*) AS purchases,
+            SUM(amount) AS revenue,
+            MIN(purchased_at) AS first_purchase,
+            MAX(purchased_at) AS last_purchase
+        FROM sales
+        GROUP BY student_id
+        ORDER BY revenue DESC
+        """
+    ).fetchall()
+
+    connection.close()
+
+    return [dict(row) for row in rows]
+
+@app.get("/analytics/funnel")
+def analytics_funnel():
+    connection = get_connection()
+
+    clicks = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM marketing_touches
+        WHERE event_type = 'click'
+        """
+    ).fetchone()[0]
+
+    bot_starts = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM marketing_touches
+        WHERE event_type = 'bot_start'
+        """
+    ).fetchone()[0]
+
+    leads = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM marketing_touches
+        WHERE event_type = 'lead'
+        """
+    ).fetchone()[0]
+
+    buyers = connection.execute(
+        """
+        SELECT COUNT(DISTINCT student_id)
+        FROM attribution
+        """
+    ).fetchone()[0]
+
+    revenue = connection.execute(
+        """
+        SELECT COALESCE(SUM(attributed_revenue), 0)
+        FROM attribution
+        """
+    ).fetchone()[0]
+
+    connection.close()
+
+    return {
+        "clicks": clicks,
+        "bot_starts": bot_starts,
+        "leads": leads,
+        "buyers": buyers,
+        "revenue": revenue,
+    }
+
+@app.get("/analytics/funnel")
+def analytics_funnel():
+    connection = get_connection()
+
+    clicks = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM marketing_touches
+        WHERE event_type = 'click'
+        """
+    ).fetchone()[0]
+
+    bot_starts = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM marketing_touches
+        WHERE event_type = 'bot_start'
+        """
+    ).fetchone()[0]
+
+    leads = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM marketing_touches
+        WHERE event_type = 'lead'
+        """
+    ).fetchone()[0]
+
+    buyers = connection.execute(
+        """
+        SELECT COUNT(DISTINCT student_id)
+        FROM attribution
+        """
+    ).fetchone()[0]
+
+    revenue = connection.execute(
+        """
+        SELECT COALESCE(SUM(attributed_revenue), 0)
+        FROM attribution
+        """
+    ).fetchone()[0]
+
+    connection.close()
+
+    return {
+        "clicks": clicks,
+        "bot_starts": bot_starts,
+        "leads": leads,
+        "buyers": buyers,
+        "revenue": revenue,
+    }
+
+@app.get("/analytics/attribution/{student_id}")
+def analytics_student_attribution(student_id: str):
+    connection = get_connection()
+
+    touches = connection.execute(
+        """
+        SELECT
+    touch_id,
+    campaign_id,
+    placement_id,
+    creative_id,
+    tracking_id,
+    event_type,
+    touched_at
+FROM marketing_touches
+        WHERE student_id = ?
+        ORDER BY touched_at
+        """,
+        (student_id,)
+    ).fetchall()
+
+    purchases = connection.execute(
+        """
+        SELECT
+            sale_id,
+            course,
+            amount,
+            purchased_at
+        FROM sales
+        WHERE student_id = ?
+        ORDER BY purchased_at
+        """,
+        (student_id,)
+    ).fetchall()
+
+    total_revenue = connection.execute(
+        """
+        SELECT COALESCE(SUM(amount), 0)
+        FROM sales
+        WHERE student_id = ?
+        """,
+        (student_id,)
+    ).fetchone()[0]
+
+    connection.close()
+
+    return {
+        "student_id": student_id,
+        "touches": [dict(row) for row in touches],
+        "purchases": [dict(row) for row in purchases],
+        "total_revenue": total_revenue,
+    }

@@ -80,6 +80,16 @@ def init_db():
             FOREIGN KEY (lead_id) REFERENCES leads(lead_id)
         );
     """)
-
+    connection.execute(
+    """
+    CREATE TABLE IF NOT EXISTS sales (
+        sale_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id TEXT NOT NULL,
+        amount REAL NOT NULL,
+        course TEXT NOT NULL,
+        purchased_at TEXT NOT NULL
+    )
+    """
+    )
     connection.commit()
     connection.close()
