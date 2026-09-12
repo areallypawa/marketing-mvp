@@ -578,22 +578,6 @@ git clone <URL_РЕПОЗИТОРИЯ>
 cd marketing-mvp
 ```
 
-После этого структура проекта должна выглядеть примерно так:
-
-```text
-marketing-mvp/
-│
-├── backend/
-│   └── seed.py
-│
-├── data/
-│   └── base.xlsx
-│
-├── README.md
-│
-└── ...
-```
-
 ---
 
 ## 14.3. Создание виртуального окружения
@@ -610,12 +594,6 @@ python -m venv .venv
 
 ```powershell
 .venv\Scripts\activate
-```
-
-После успешной активации в начале строки терминала появится:
-
-```text
-(.venv)
 ```
 
 ### Linux / macOS
@@ -635,17 +613,15 @@ source .venv/bin/activate
 pip install openpyxl
 ```
 
-Проверить установку:
+Для запуска страницы с анализом:
+Из корневой папки:
 
 ```bash
-pip show openpyxl
+cd frontend
+npm install
+npm run dev
 ```
 
-Если в проекте используется файл `requirements.txt`, рекомендуется устанавливать зависимости одной командой:
-
-```bash
-pip install -r requirements.txt
-```
 
 ---
 

@@ -194,7 +194,6 @@ function App() {
     <div className="app">
       <header className="header">
         <div>
-          <h1>Marketing Analytics</h1>
           <p>
             Анализ продаж и эффективности маркетинговых активностей
           </p>
