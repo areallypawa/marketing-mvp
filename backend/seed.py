@@ -1,5 +1,6 @@
 import sqlite3
 import random
+import csv
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -154,62 +155,19 @@ def generate_funnel_dates(purchase_date_str, publication_date_str):
 # IMPORT BASE.XLSX -> SALES
 # ============================================================
 
-def import_sales_from_excel(cursor):
-    EXCEL_PATH = BASE_DIR / "data" / "base.xlsx"
+# ============================================================
+# IMPORT SALES MART -> SALES
+# ============================================================
 
-    if not EXCEL_PATH.exists():
+def import_sales_from_mart(cursor):
+    MART_PATH = BASE_DIR / "data" / "sales_mart_format.csv"
+
+    if not MART_PATH.exists():
         raise FileNotFoundError(
-            f"Файл base.xlsx не найден: {EXCEL_PATH}"
+            f"Файл sales_mart_format.csv не найден: {MART_PATH}"
         )
 
-    try:
-        from openpyxl import load_workbook
-    except ImportError:
-        raise ImportError(
-            "Не установлен openpyxl. Выполни: pip install openpyxl"
-        )
-
-    print(f"Читаем продажи из: {EXCEL_PATH}")
-
-    workbook = load_workbook(
-        EXCEL_PATH,
-        read_only=True,
-        data_only=True
-    )
-
-    sheet = workbook.active
-
-    rows = list(sheet.iter_rows(values_only=True))
-
-    if not rows:
-        raise ValueError("Файл base.xlsx пустой")
-
-    # Первая строка — заголовки
-    headers = [str(value).strip() if value is not None else "" for value in rows[0]]
-
-    print("Найденные колонки:")
-    print(headers)
-
-    required_columns = {
-        "Номер студента": "student_id",
-        "Сумма": "amount",
-        "Курс": "course",
-        "Время": "purchased_at"
-    }
-
-    # Проверяем наличие всех нужных колонок
-    for column in required_columns:
-        if column not in headers:
-            raise ValueError(
-                f"В base.xlsx не найдена колонка '{column}'.\n"
-                f"Найдены колонки: {headers}"
-            )
-
-    # Индексы колонок
-    student_id_index = headers.index("Номер студента")
-    amount_index = headers.index("Сумма")
-    course_index = headers.index("Курс")
-    purchased_at_index = headers.index("Время")
+    print(f"Читаем продажи из витрины: {MART_PATH}")
 
     # Пересоздаём sales
     cursor.execute("DROP TABLE IF EXISTS sales")
@@ -226,104 +184,62 @@ def import_sales_from_excel(cursor):
 
     inserted_count = 0
 
-    for row_number, row in enumerate(rows[1:], start=2):
-        # Пропускаем полностью пустые строки
-        if not row or all(value is None for value in row):
-            continue
+    with open(MART_PATH, encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        
+        for row_number, row in enumerate(reader, start=2):
+            student_id = row.get("student_id", "").strip()
+            amount_str = row.get("order_revenue", "").strip()
+            course = row.get("courses", "").strip()
+            purchased_at = row.get("timestamp", "").strip()
 
-        student_id = row[student_id_index]
-        amount = row[amount_index]
-        course = row[course_index]
-        purchased_at = row[purchased_at_index]
+            # Пропускаем, если нет обязательных полей
+            if not student_id or not amount_str or not purchased_at:
+                continue
 
-        # Проверяем обязательные поля
-        if student_id is None:
-            print(
-                f"Строка {row_number}: пропущена — нет номера студента"
-            )
-            continue
-
-        if amount is None:
-            print(
-                f"Строка {row_number}: пропущена — нет суммы"
-            )
-            continue
-
-        if purchased_at is None:
-            print(
-                f"Строка {row_number}: пропущена — нет времени покупки"
-            )
-            continue
-
-        # student_id приводим к строке
-        student_id = str(student_id).strip()
-
-        # Сумма -> float
-        try:
-            amount = float(amount)
-        except (TypeError, ValueError):
-            print(
-                f"Строка {row_number}: пропущена — "
-                f"некорректная сумма: {amount}"
-            )
-            continue
-
-        # Обрабатываем дату
-        if isinstance(purchased_at, datetime):
-            purchased_at = purchased_at.strftime("%Y-%m-%d %H:%M:%S")
-        else:
-            purchased_at = str(purchased_at).strip()
-
-            # Пробуем привести дату к нормальному формату
             try:
-                parsed_date = datetime.fromisoformat(
-                    purchased_at.replace("Z", "")
-                )
-                purchased_at = parsed_date.strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
+                amount = float(amount_str)
             except ValueError:
-                pass
+                print(f"Строка {row_number}: пропущена — некорректная сумма: {amount_str}")
+                continue
 
-        # Курс может быть пустым
-        if course is not None:
-            course = str(course).strip()
+            # Обрабатываем дату уже существующим хелпером parse_datetime
+            try:
+                dt = parse_datetime(purchased_at)
+                purchased_at_formatted = dt.strftime("%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                purchased_at_formatted = purchased_at
 
-        cursor.execute("""
-            INSERT INTO sales (
+            cursor.execute("""
+                INSERT INTO sales (
+                    student_id,
+                    amount,
+                    course,
+                    purchased_at
+                )
+                VALUES (?, ?, ?, ?)
+            """, (
                 student_id,
                 amount,
                 course,
-                purchased_at
-            )
-            VALUES (?, ?, ?, ?)
-        """, (
-            student_id,
-            amount,
-            course,
-            purchased_at
-        ))
+                purchased_at_formatted
+            ))
 
-        inserted_count += 1
+            inserted_count += 1
 
-    workbook.close()
+    print(f"Импортировано сгруппированных продаж: {inserted_count}")
 
-    print(f"Импортировано продаж: {inserted_count}")
-
-    # Небольшая проверка
+    # Проверка
     cursor.execute("SELECT COUNT(*) FROM sales")
     sales_count = cursor.fetchone()[0]
 
     cursor.execute("SELECT COUNT(DISTINCT student_id) FROM sales")
     students_count = cursor.fetchone()[0]
 
-    cursor.execute("""
-        SELECT MIN(purchased_at), MAX(purchased_at)
-        FROM sales
-    """)
+    cursor.execute("SELECT MIN(purchased_at), MAX(purchased_at) FROM sales")
     min_date, max_date = cursor.fetchone()
 
-    print(f"Всего записей в sales: {sales_count}")
+    print(f"Всего заказов (сгруппированных): {sales_count}")
     print(f"Уникальных студентов: {students_count}")
     print(f"Период продаж: {min_date} — {max_date}")
 
@@ -349,7 +265,7 @@ def seed_synthetic_data():
         # IMPORT SALES
         # ====================================================
 
-        import_sales_from_excel(cursor)
+        import_sales_from_mart(cursor)
 
         # ====================================================
         # CREATE SYNTHETIC TABLES
